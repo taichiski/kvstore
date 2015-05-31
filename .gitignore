@@ -1,0 +1,11 @@
+*.class
+*.log
+.settings
+.cache-main
+.cache-tests
+.classpath
+.project
+project/project
+project/target
+submission
+target
