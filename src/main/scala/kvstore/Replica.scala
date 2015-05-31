@@ -48,9 +48,11 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   // Secondary
   var expectedSeq = 0L
-  val persistActor = context.actorOf(persistenceProps,"persist-actor")
-  val persistSender = context.actorOf(PersistSender.props(persistActor),"persist-sender")
-  var snapshotMap = Map.empty[Long,(ActorRef,Snapshot)]
+
+  // Persistence
+  val persistActor = context.actorOf(persistenceProps, "persist-actor")
+  val persistSender = context.actorOf(PersistSender.props(persistActor), "persist-sender")
+  var persistMap = Map.empty[Long, (ActorRef, Any)]
 
   override def preStart = {
     arbiter ! Join
@@ -63,13 +65,28 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   /* TODO Behavior for  the leader role. */
   val leader: Receive = {
-    case Insert(key, value, id) => {
+    case msg @ Insert(key, value, id) => {
       kv += (key -> value)
-      sender ! OperationAck(id)
+      persistMap += (id -> (sender, msg))
+      persistSender ! SendPersist(key, Some(value), id)
     }
-    case Remove(key, id) => {
+    case msg @ Remove(key, id) => {
       kv -= key
-      sender ! OperationAck(id)
+      persistMap += (id -> (sender, msg))
+      persistSender ! SendPersist(key, None, id)
+    }
+    case PersistSent(key, id) => {
+      val (psnd, msg) = persistMap(id)
+      persistMap -= id
+      msg match {
+        case Insert(key, value, id) => {
+          psnd ! OperationAck(id)
+        }
+        case Remove(key, id) => {
+          psnd ! OperationAck(id)
+        }
+        case _ =>
+      }
     }
     case Get(key, id) => {
       sender ! GetResult(key, kv.get(key), id)
@@ -79,26 +96,32 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
-    case msg@Snapshot(key, valueOption, seq) => {
+    case msg @ Snapshot(key, valueOption, seq) => {
       if (seq == expectedSeq) {
         valueOption match {
           case Some(value) => kv += (key -> value)
           case None        => kv -= key
         }
-        
-        snapshotMap += (seq -> (sender,msg))
-        persistSender ! SendPersist(key,valueOption,seq)
-        
+
+        persistMap += (seq -> (sender, msg))
+        persistSender ! SendPersist(key, valueOption, seq)
+
         expectedSeq += 1
-        
-      } else if(seq < expectedSeq) {
-        sender ! SnapshotAck(key,seq)
+
+      } else if (seq < expectedSeq) {
+        sender ! SnapshotAck(key, seq)
       }
 
     }
-    case PersistSent(key,seq) => {
-      val (ssnd,Snapshot(_,_,id)) = snapshotMap(seq)
-      ssnd ! SnapshotAck(key,id)
+    case PersistSent(key, seq) => {
+      val (ssnd, msg) = persistMap(seq)
+      persistMap -= seq
+      msg match {
+        case Snapshot(key,valueOption,seq) => {
+          ssnd ! SnapshotAck(key,seq)
+        }
+        case _ =>
+      }
     }
     case Get(key, id) => {
       sender ! GetResult(key, kv.get(key), id)
