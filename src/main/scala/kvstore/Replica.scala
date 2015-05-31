@@ -35,7 +35,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import Replicator._
   import Persistence._
   import context.dispatcher
-
+  import PersistSender._
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
@@ -48,6 +48,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   // Secondary
   var expectedSeq = 0L
+  val persistActor = context.actorOf(persistenceProps,"persist-actor")
+  val persistSender = context.actorOf(PersistSender.props(persistActor),"persist-sender")
+  var snapshotMap = Map.empty[Long,(ActorRef,Snapshot)]
 
   override def preStart = {
     arbiter ! Join
@@ -76,13 +79,15 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
 
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
-    case Snapshot(key, valueOption, seq) => {
+    case msg@Snapshot(key, valueOption, seq) => {
       if (seq == expectedSeq) {
         valueOption match {
           case Some(value) => kv += (key -> value)
           case None        => kv -= key
         }
-        sender ! SnapshotAck(key, seq)
+        
+        snapshotMap += (seq -> (sender,msg))
+        persistSender ! SendPersist(key,valueOption,seq)
         
         expectedSeq += 1
         
@@ -90,6 +95,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         sender ! SnapshotAck(key,seq)
       }
 
+    }
+    case PersistSent(key,seq) => {
+      val (ssnd,Snapshot(_,_,id)) = snapshotMap(seq)
+      ssnd ! SnapshotAck(key,id)
     }
     case Get(key, id) => {
       sender ! GetResult(key, kv.get(key), id)
