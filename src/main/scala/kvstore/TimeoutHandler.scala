@@ -5,6 +5,7 @@ import scala.concurrent.Future
 import akka.actor.Props
 import akka.actor.ActorRef
 import akka.actor.ActorLogging
+import scala.concurrent.duration._
 
 object TimeoutHandler {
   case class TimeoutMessage(msg: Any, id: Long)
@@ -17,19 +18,11 @@ class TimeoutHandler extends Actor {
   import TimeoutHandler._
   import context.dispatcher
   
-  var timeoutMap = Map.empty[Long,(ActorRef,Any)]
-  
   def receive: Receive = {
 
     case TimeoutMessage(msg: Any,id: Long) => {
-      
-      timeoutMap += (id -> (sender,msg))
-
-      Future[Unit] {
-        Thread.sleep(1000)
-   
-        val (tsnd, msg) = timeoutMap(id)
-             
+      val tsnd = sender
+      context.system.scheduler.scheduleOnce(Duration(1,"second")) {
         tsnd ! Timedout(msg,id)
       }
     }

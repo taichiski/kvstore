@@ -4,6 +4,8 @@ import akka.actor.Props
 import akka.actor.Actor
 import akka.actor.ActorRef
 import scala.concurrent.duration._
+import akka.actor.ActorLogging
+import akka.event.LoggingReceive
 
 object Replicator {
   case class Replicate(key: String, valueOption: Option[String], id: Long)
@@ -15,7 +17,7 @@ object Replicator {
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 }
 
-class Replicator(val replica: ActorRef) extends Actor {
+class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   import Replicator._
   import Replica._
   import ReplicateSender._
@@ -41,7 +43,7 @@ class Replicator(val replica: ActorRef) extends Actor {
   }
 
   /* TODO Behavior for the Replicator. */
-  def receive: Receive = {
+  def receive: Receive = LoggingReceive {
     case msg @ Replicate(key, valueOption, id) => {
       val seq = nextSeq
       acks += (seq -> (sender, msg))

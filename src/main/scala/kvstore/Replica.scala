@@ -13,6 +13,7 @@ import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 import akka.util.Timeout
 import akka.actor.ActorLogging
+import akka.event.LoggingReceive
 
 object Replica {
   sealed trait Operation {
@@ -31,7 +32,7 @@ object Replica {
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
 
-class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
+class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
   import Replica._
   import Replicator._
   import Persistence._
@@ -85,9 +86,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case JoinedSecondary => context.become(replica)
   }
 
-  val leader: Receive = {
+  val leader: Receive = LoggingReceive {
     case msg @ Insert(key, value, id) => {
       kv += (key -> value)
+      
+      for(replicator <- replicators) {
+        replicator ! Replicate(key,Some(value),nextReplicateId)
+      }
       persistMap += (id -> (sender, msg))
       
       val persistMsg = SendPersist(key, Some(value), id)
@@ -98,6 +103,11 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     }
     case msg @ Remove(key, id) => {
       kv -= key
+      
+      for(replicator <- replicators) {
+        replicator ! Replicate(key,None,nextReplicateId)
+      }
+      
       persistMap += (id -> (sender, msg))
       val persistMsg = SendPersist(key,None,id)
       
@@ -184,7 +194,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case _ =>
   }
 
-  val replica: Receive = {
+  val replica: Receive = LoggingReceive {
     case msg @ Snapshot(key, valueOption, seq) => {
       if (seq == expectedSeq) {
         valueOption match {
