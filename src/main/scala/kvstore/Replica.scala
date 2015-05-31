@@ -12,6 +12,7 @@ import akka.actor.PoisonPill
 import akka.actor.OneForOneStrategy
 import akka.actor.SupervisorStrategy
 import akka.util.Timeout
+import akka.actor.ActorLogging
 
 object Replica {
   sealed trait Operation {
@@ -36,6 +37,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import Persistence._
   import context.dispatcher
   import PersistSender._
+  import TimeoutHandler._
+  
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
@@ -53,6 +56,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   val persistActor = context.actorOf(persistenceProps, "persist-actor")
   val persistSender = context.actorOf(PersistSender.props(persistActor), "persist-sender")
   var persistMap = Map.empty[Long, (ActorRef, Any)]
+  
+  // Timeout
+  val timeoutActor = context.actorOf(TimeoutHandler.props,"timeout-actor")
+  var timeoutMap = Map.empty[Long,ActorRef]
 
   override def preStart = {
     arbiter ! Join
@@ -68,24 +75,64 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case msg @ Insert(key, value, id) => {
       kv += (key -> value)
       persistMap += (id -> (sender, msg))
-      persistSender ! SendPersist(key, Some(value), id)
+      
+      val persistMsg = SendPersist(key, Some(value), id)
+      persistSender ! persistMsg
+      
+      timeoutMap += (id -> sender)
+      timeoutActor ! TimeoutMessage(persistMsg,id)
     }
     case msg @ Remove(key, id) => {
       kv -= key
       persistMap += (id -> (sender, msg))
-      persistSender ! SendPersist(key, None, id)
+      val persistMsg = SendPersist(key,None,id)
+      
+      persistSender ! persistMsg
+      
+      timeoutMap += (id -> sender)
+      timeoutActor ! TimeoutMessage(persistMsg,id)
     }
+    
     case PersistSent(key, id) => {
-      val (psnd, msg) = persistMap(id)
-      persistMap -= id
-      msg match {
-        case Insert(key, value, id) => {
-          psnd ! OperationAck(id)
+      
+      val opt = persistMap.get(id)
+      opt match {
+        case Some((psnd,msg)) => {
+          persistMap -= id
+          val topt = timeoutMap.get(id)
+          topt match {
+            case Some(tsnd) => timeoutMap -= id
+            case None =>
+          }
+          msg match {
+            case Insert(_,_,_) => psnd ! OperationAck(id)
+            case Remove(_,_) => psnd ! OperationAck(id)
+            case _ =>
+          }
         }
-        case Remove(key, id) => {
-          psnd ! OperationAck(id)
+        case None =>
+      }
+    }
+    
+    case Timedout(msg,id) => {
+      
+      val tsndOpt = timeoutMap.get(id)
+      tsndOpt match {
+        case Some(tsnd) => {
+          msg match {
+            case SendPersist(_,_,_) => {
+              val pOpt = persistMap.get(id)
+              pOpt match {
+                case Some((psnd,msg)) => persistMap -= id
+                case None =>
+              }
+              tsnd ! OperationFailed(id)
+            }
+            case None =>
+          }
+          
         }
-        case _ =>
+        case None =>
       }
     }
     case Get(key, id) => {
