@@ -17,7 +17,7 @@ object Replicator {
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 }
 
-class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
+class Replicator(val replica: ActorRef) extends Actor {
   import Replicator._
   import Replica._
   import ReplicateSender._
@@ -43,7 +43,7 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   }
 
   /* TODO Behavior for the Replicator. */
-  def receive: Receive = LoggingReceive {
+  def receive: Receive = {
     case msg @ Replicate(key, valueOption, id) => {
       val seq = nextSeq
       acks += (seq -> (sender, msg))

@@ -17,14 +17,14 @@ object ReplicateSender {
   def props(replica: ActorRef): Props = Props(new ReplicateSender(replica))
 }
 
-class ReplicateSender(val replica: ActorRef) extends Actor with ActorLogging {
+class ReplicateSender(val replica: ActorRef) extends Actor {
   import Replicator._
   import ReplicateSender._
   import context.dispatcher
 
   var senderMap = Map.empty[Long, (ActorRef, Cancellable)]
 
-  def receive: Receive = LoggingReceive {
+  def receive: Receive = {
     case SendReplicate(key, valueOption, seq) => {
       val scheduler = context.system.scheduler.schedule(Duration(0, "milliseconds"), Duration(100, "milliseconds")) {
         replica ! Snapshot(key, valueOption, seq)

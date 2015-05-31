@@ -32,7 +32,7 @@ object Replica {
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
 
-class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
+class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import Replica._
   import Replicator._
   import Persistence._
@@ -86,7 +86,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     case JoinedSecondary => context.become(replica)
   }
 
-  val leader: Receive = LoggingReceive {
+  val leader: Receive = {
     case msg @ Insert(key, value, id) => {
       kv += (key -> value)
       
@@ -194,7 +194,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     case _ =>
   }
 
-  val replica: Receive = LoggingReceive {
+  val replica: Receive = {
     case msg @ Snapshot(key, valueOption, seq) => {
       if (seq == expectedSeq) {
         valueOption match {

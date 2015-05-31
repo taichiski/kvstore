@@ -15,7 +15,7 @@ object SnapshotSender {
   def snapshotSenderProps(replica: ActorRef): Props = Props(new SnapshotSender(replica))
 }
 
-class SnapshotSender(val replica: ActorRef) extends Actor with ActorLogging {
+class SnapshotSender(val replica: ActorRef) extends Actor {
   import SnapshotSender._
   import Replicator._
   import context.dispatcher
