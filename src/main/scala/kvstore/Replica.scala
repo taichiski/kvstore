@@ -60,6 +60,21 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // Timeout
   val timeoutActor = context.actorOf(TimeoutHandler.props,"timeout-actor")
   var timeoutMap = Map.empty[Long,ActorRef]
+  
+  // Replication
+  var _replicatorId = 0L
+  def nextReplicatorId: Long = {
+    val ret = _replicatorId
+    _replicatorId += 1
+    ret
+  }
+
+  var _replicateId = 0L
+  def nextReplicateId: Long = {
+    val ret = _replicateId
+    _replicateId += 1
+    ret
+  }
 
   override def preStart = {
     arbiter ! Join
@@ -70,7 +85,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
     case JoinedSecondary => context.become(replica)
   }
 
-  /* TODO Behavior for  the leader role. */
   val leader: Receive = {
     case msg @ Insert(key, value, id) => {
       kv += (key -> value)
@@ -135,13 +149,41 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         case None =>
       }
     }
+    case Replicas(replicas) => {
+      val secondaryReplicas = replicas.filterNot(_ == self)
+      val newSecondaryReplicas = secondaryReplicas.filterNot(secondaries.keySet.contains(_))
+      val removeSecondaryReplicas = secondaries.keySet.filterNot(secondaryReplicas.contains(_))
+      
+      for(replica <- newSecondaryReplicas) {
+        val name = s"replicator-$nextReplicatorId"
+        val replicator = context.actorOf(Replicator.props(replica),name)
+        secondaries += (replica -> replicator)
+        replicators += replicator
+        
+        for((key, value) <- kv) {
+          replicator ! Replicate(key,Some(value),nextReplicateId)
+        }
+      }
+      
+      for(replica <- removeSecondaryReplicas) {
+        context.stop(replica)
+        val replicatorOpt = secondaries.get(replica)
+        replicatorOpt match {
+          case Some(replicator) => {
+            context.stop(replicator)
+            secondaries -= replica
+            replicators -= replicator
+          }
+          case None =>
+        }
+      }
+    }
     case Get(key, id) => {
       sender ! GetResult(key, kv.get(key), id)
     }
     case _ =>
   }
 
-  /* TODO Behavior for the replica role. */
   val replica: Receive = {
     case msg @ Snapshot(key, valueOption, seq) => {
       if (seq == expectedSeq) {
